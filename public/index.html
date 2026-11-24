@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitoreo Invernadero de Orquídeas</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
+    body { background-color: #f3f4f6; color: #111827; padding: 20px; }
+    .container { max-width: 1150px; margin: 0 auto; }
+
+    header {
+      background: #ffffff; padding: 18px 24px; border-radius: 10px;
+      display: flex; justify-content: space-between; align-items: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 20px;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    .bell-container { position: relative; cursor: pointer; font-size: 1.4rem; }
+    .badge {
+      position: absolute; top: -4px; right: -6px; background: #dc2626; color: white;
+      font-size: 0.7rem; font-weight: bold; padding: 2px 5px; border-radius: 50%; display: none;
+    }
+
+    .top-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+    .card {
+      background: #ffffff; padding: 20px; border-radius: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08); text-align: center;
+      border: 2px solid transparent; transition: 0.3s;
+    }
+    .card.alerta-rango { border-color: #dc2626; background-color: #fef2f2; }
+    .card.alerta-rango .big-value, .card.alerta-rango .sub-text { color: #dc2626; font-weight: 600; }
+
+    .card h2 { font-size: 0.8rem; color: #374151; font-weight: 600; margin-bottom: 10px; text-transform: uppercase; }
+    .big-value { font-size: 2.4rem; font-weight: 700; margin: 8px 0; color: #111827; }
+    .sub-text { font-size: 0.82rem; color: #6b7280; }
+    .status-text { font-size: 0.95rem; font-weight: 600; margin: 14px 0; color: #16a34a; }
+    .status-text.offline { color: #dc2626; }
+
+    .btn-outline {
+      width: 100%; padding: 9px; background: #fff; border: 1px solid #9ca3af;
+      border-radius: 6px; font-weight: 500; cursor: pointer;
+    }
+    .btn-outline:hover { background: #f9fafb; }
+
+    .bottom-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 20px; }
+    .card-left { text-align: left; }
+    .days-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+    .day-item { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; cursor: pointer; }
+    .day-item input { width: 15px; height: 15px; accent-color: #2e8540; }
+
+    .schedule-controls { display: flex; gap: 12px; margin: 16px 0; }
+    input[type="time"] { flex: 1; padding: 9px; border: 1px solid #d1d5db; border-radius: 6px; }
+    .btn-green {
+      flex: 1.5; background: #2e8540; color: #fff; border: none; border-radius: 6px;
+      font-weight: 600; cursor: pointer; padding: 9px 14px;
+    }
+    .btn-green:hover { background: #246b33; }
+
+    .alert-box {
+      background: #fef9c3; border: 1px solid #fde047; color: #854d0e;
+      padding: 12px; border-radius: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;
+    }
+    .alert-box.riego-activo { background: #dcfce7; border-color: #22c55e; color: #166534; font-weight: 600; }
+
+    .freq-row { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+    select { flex: 1; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; }
+    .table-wrapper { border: 1px solid #e5e7eb; border-radius: 8px; overflow-y: auto; max-height: 220px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.84rem; text-align: left; }
+    th { background: #f9fafb; padding: 10px; border-bottom: 1px solid #e5e7eb; position: sticky; top: 0; }
+    td { padding: 9px 10px; border-bottom: 1px solid #f3f4f6; }
+    .badge-ok { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 12px; font-weight: 600; font-size: 0.75rem; }
+    .badge-alert { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 12px; font-weight: 600; font-size: 0.75rem; }
+
+    @media (max-width: 900px) { .top-grid, .bottom-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>MONITOREO INVERNADERO DE ORQUIDEAS</h1>
+    <div class="bell-container" title="Alertas" onclick="document.getElementById('notif-badge').style.display='none'">
+      🔔<span class="badge" id="notif-badge">!</span>
+    </div>
+  </header>
+
+  <div class="top-grid">
+    <div class="card" id="card-humedad">
+      <h2>Humedad Relativa Actual</h2>
+      <div class="big-value" id="val-humedad">--%</div>
+      <div class="sub-text" id="estado-humedad">Óptimo: 80% - Normal</div>
+    </div>
+
+    <div class="card" id="card-temp">
+      <h2>Temperatura Actual</h2>
+      <div class="big-value" id="val-temp">-- °C</div>
+      <div class="sub-text" id="estado-temp">Óptimo: 18°C - 24°C</div>
+    </div>
+
+    <div class="card" id="card-luz">
+      <h2>Nivel de Iluminación</h2>
+      <div class="big-value" id="val-luz">--%</div>
+      <div class="sub-text">Óptimo: 40% - 70%</div>
+    </div>
+
+    <div class="card">
+      <h2>Conexión de Sensores</h2>
+      <div class="status-text offline" id="estado-conexion">Esperando Wokwi...</div>
+      <button class="btn-outline" id="btn-riego" onclick="toggleRiego()">Activar Riego Manual</button>
+    </div>
+  </div>
+
+  <div class="bottom-grid">
+    <div class="card card-left">
+      <h2>Calendario de Riego</h2>
+      <div class="days-grid" id="dias-container">
+        <label class="day-item"><input type="checkbox" value="Lunes"> Lunes</label>
+        <label class="day-item"><input type="checkbox" value="Martes"> Martes</label>
+        <label class="day-item"><input type="checkbox" value="Miércoles"> Miércoles</label>
+        <label class="day-item"><input type="checkbox" value="Jueves"> Jueves</label>
+        <label class="day-item"><input type="checkbox" value="Viernes"> Viernes</label>
+        <label class="day-item"><input type="checkbox" value="Sábado"> Sábado</label>
+        <label class="day-item"><input type="checkbox" value="Domingo"> Domingo</label>
+      </div>
+
+      <div class="schedule-controls">
+        <input type="time" id="hora-riego" value="08:30">
+        <button class="btn-green" onclick="guardarCalendario()">Guardar Calendario</button>
+      </div>
+
+      <div class="alert-box" id="recordatorio-box">
+        <span>⚠️</span>
+        <span id="recordatorio-texto">Cargando calendario...</span>
+      </div>
+    </div>
+
+    <div class="card card-left">
+      <h2>Registro Histórico Ambiental</h2>
+      <div class="freq-row">
+        <label>Frecuencia</label>
+        <select id="frecuencia" onchange="cambiarFrecuencia()">
+          <option value="60">Cada 1 hora (60 min)</option>
+          <option value="30">Cada 30 minutos</option>
+          <option value="1">Cada 1 minuto (Pruebas)</option>
+        </select>
+        <button class="btn-green" style="flex:0.8;" onclick="forzarRegistroBD()">Guardar Ahora</button>
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Humedad</th>
+              <th>Temperatura</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="tabla-historial"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let riegoActivo = false;
+  let datosInicialesCargados = false;
+  let ultimosDatos = { humedad: 0, temperatura: 0, luz: 0 };
+
+  async function sincronizarDashboard() {
+    try {
+      const res = await fetch('/api/dashboard');
+      const data = await res.json();
+
+      if (data.actual.conectado) {
+        ultimosDatos = data.actual;
+        document.getElementById('val-humedad').textContent = `${data.actual.humedad}%`;
+        document.getElementById('val-temp').textContent = `${data.actual.temperatura} °C`;
+        document.getElementById('val-luz').textContent = `${data.actual.luz}%`;
+
+        const st = document.getElementById('estado-conexion');
+        st.textContent = "Conectado (Arduino Wokwi)";
+        st.classList.remove('offline');
+
+        const cardHum = document.getElementById('card-humedad');
+        const txtHum = document.getElementById('estado-humedad');
+        if (data.actual.humedad < 70 || data.actual.humedad > 85) {
+          cardHum.classList.add('alerta-rango');
+          txtHum.textContent = "⚠️ Alerta: Fuera de rango (70%-85%)";
+          document.getElementById('notif-badge').style.display = 'inline-block';
+        } else {
+          cardHum.classList.remove('alerta-rango');
+          txtHum.textContent = `Óptimo: ${Number(data.config.humedad_optima)}% - Normal`;
+        }
+
+        const cardTemp = document.getElementById('card-temp');
+        const txtTemp = document.getElementById('estado-temp');
+        if (data.actual.temperatura < Number(data.config.temp_min) || data.actual.temperatura > Number(data.config.temp_max)) {
+          cardTemp.classList.add('alerta-rango');
+          txtTemp.textContent = `⚠️ Alerta (${data.config.temp_min}°C - ${data.config.temp_max}°C)`;
+        } else {
+          cardTemp.classList.remove('alerta-rango');
+          txtTemp.textContent = `Óptimo: ${data.config.temp_min}°C - ${data.config.temp_max}°C`;
+        }
+      }
+
+      riegoActivo = data.riego === 'RIEGO_ON';
+      document.getElementById('btn-riego').textContent = riegoActivo ? 'Detener Riego (Relé ON)' : 'Activar Riego Manual';
+      const box = document.getElementById('recordatorio-box');
+      if (riegoActivo) box.classList.add('riego-activo');
+      else box.classList.remove('riego-activo');
+
+      if (!datosInicialesCargados && data.calendario) {
+        const horaLimpia = data.calendario.hora_riego.toString().slice(0, 5);
+        document.getElementById('hora-riego').value = horaLimpia;
+        const diasStr = data.calendario.dias_riego || "";
+        document.querySelectorAll('#dias-container input').forEach(cb => {
+          cb.checked = diasStr.includes(cb.value);
+        });
+        document.getElementById('recordatorio-texto').textContent =
+          `Recordatorio: Próximo riego programado (${diasStr}) a las ${horaLimpia} hrs.`;
+        if (data.config) document.getElementById('frecuencia').value = data.config.frecuencia_minutos;
+        datosInicialesCargados = true;
+      }
+
+      const tbody = document.getElementById('tabla-historial');
+      tbody.innerHTML = '';
+      data.historial.forEach(fila => {
+        const fecha = new Date(fila.fecha_hora + 'Z').toLocaleString('es-CL', {
+          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+        });
+        const esAlerta = fila.alerta_fuera_rango === 1 || fila.alerta_fuera_rango === true;
+        const badge = esAlerta
+          ? `<span class="badge-alert">Fuera de rango</span>`
+          : `<span class="badge-ok">Óptimo</span>`;
+
+        tbody.innerHTML += `
+          <tr>
+            <td>${fecha}</td>
+            <td>${fila.humedad_relativa}%</td>
+            <td>${fila.temperatura} °C</td>
+            <td>${badge}</td>
+          </tr>
+        `;
+      });
+    } catch (e) {
+      console.error("Error sincronizando:", e);
+    }
+  }
+
+  async function guardarCalendario() {
+    const dias = Array.from(document.querySelectorAll('#dias-container input:checked')).map(cb => cb.value);
+    const hora_riego = document.getElementById('hora-riego').value;
+    if (!dias.length || !hora_riego) return alert("Selecciona días y hora.");
+
+    const dias_riego = dias.join(', ');
+    await fetch('/api/calendario', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dias_riego, hora_riego })
+    });
+
+    document.getElementById('recordatorio-texto').textContent =
+      `Recordatorio: Próximo riego programado (${dias_riego}) a las ${hora_riego} hrs.`;
+    alert("Calendario guardado correctamente.");
+  }
+
+  async function cambiarFrecuencia() {
+    const frecuencia_minutos = document.getElementById('frecuencia').value;
+    await fetch('/api/frecuencia', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frecuencia_minutos })
+    });
+  }
+
+  async function forzarRegistroBD() {
+    if (!ultimosDatos.humedad) return alert("Conecta primero Wokwi y el puente local.");
+    await fetch('/api/sensores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...ultimosDatos, guardarHistorial: true })
+    });
+    sincronizarDashboard();
+  }
+
+  async function toggleRiego() {
+    const comando = riegoActivo ? 'RIEGO_OFF' : 'RIEGO_ON';
+    await fetch('/api/riego', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comando })
+    });
+    sincronizarDashboard();
+  }
+
+  setInterval(sincronizarDashboard, 3000);
+  sincronizarDashboard();
+</script>
+</body>
+</html>
