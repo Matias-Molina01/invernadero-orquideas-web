@@ -11,8 +11,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 let db;
 let estadoRiego = "RIEGO_OFF";
-let ultimaLectura = { humedad: 0, temperatura: 0, luz: 0, conectado: false };
+let ultimaLectura = { humedad: 80.0, temperatura: 21.5, luz: 55, conectado: true };
 let ultimoMinutoRegado = "";
+let ultimoGuardadoTimestamp = 0;
 
 async function iniciarBaseDatos() {
   db = await open({
@@ -49,44 +50,57 @@ async function iniciarBaseDatos() {
 
     CREATE TABLE IF NOT EXISTS configuracion_sistema (
       id_config INTEGER PRIMARY KEY AUTOINCREMENT,
-      frecuencia_minutos INTEGER NOT NULL DEFAULT 60,
+      frecuencia_minutos REAL NOT NULL DEFAULT 1,
       humedad_optima REAL NOT NULL DEFAULT 80.00,
       temp_min REAL NOT NULL DEFAULT 18.00,
       temp_max REAL NOT NULL DEFAULT 24.00
     );
 
     INSERT OR IGNORE INTO sensores (id_sensor, nombre_sensor, tipo_conexion, estado_conexion)
-    VALUES (1, 'Arduino Uno - DHT22 Invernadero (Wokwi)', 'Serial/Wi-Fi', 'Conectado');
+    VALUES (1, 'Arduino Uno - DHT22 Invernadero (Wokwi Cloud)', 'Wi-Fi', 'Conectado');
 
     INSERT OR IGNORE INTO configuracion_sistema (id_config, frecuencia_minutos, humedad_optima, temp_min, temp_max)
-    VALUES (1, 60, 80.00, 18.00, 24.00);
+    VALUES (1, 1, 80.00, 18.00, 24.00);
   `);
 
   console.log("[BASE DE DATOS] Tablas creadas y conectadas correctamente.");
 }
 
-// 1. Recibir lecturas desde Wokwi y guardar en lecturas_ambientales
+// 1. Recibir lecturas (desde la Web o desde puente local)
 app.post('/api/sensores', async (req, res) => {
   try {
     const { humedad, temperatura, luz, guardarHistorial } = req.body;
-    ultimaLectura = { humedad, temperatura, luz: luz || 0, conectado: true };
+    ultimaLectura = {
+      humedad: Number(humedad),
+      temperatura: Number(temperatura),
+      luz: Number(luz || 55),
+      conectado: true
+    };
 
     const cfg = await db.get('SELECT * FROM configuracion_sistema WHERE id_config = 1') || {
-      humedad_optima: 80, temp_min: 18, temp_max: 24
+      frecuencia_minutos: 1, humedad_optima: 80, temp_min: 18, temp_max: 24
     };
 
     const humMin = Number(cfg.humedad_optima) - 10;
     const humMax = Number(cfg.humedad_optima) + 5;
-    const fueraDeRango = (humedad < humMin || humedad > humMax || temperatura < Number(cfg.temp_min) || temperatura > Number(cfg.temp_max));
+    const fueraDeRango = (
+      ultimaLectura.humedad < humMin ||
+      ultimaLectura.humedad > humMax ||
+      ultimaLectura.temperatura < Number(cfg.temp_min) ||
+      ultimaLectura.temperatura > Number(cfg.temp_max)
+    );
 
-    await db.run("UPDATE sensores SET estado_conexion = 'Conectado' WHERE id_sensor = 1");
+    // Evaluar guardado automático según frecuencia configurada en BD
+    const ahora = Date.now();
+    const intervaloMs = Number(cfg.frecuencia_minutos) * 60 * 1000;
+    const tocaGuardarAuto = (ahora - ultimoGuardadoTimestamp) >= intervaloMs;
 
-    if (guardarHistorial) {
+    if (guardarHistorial || tocaGuardarAuto) {
+      ultimoGuardadoTimestamp = ahora;
       await db.run(
         'INSERT INTO lecturas_ambientales (id_sensor, humedad_relativa, temperatura, alerta_fuera_rango) VALUES (1, ?, ?, ?)',
-        [humedad, temperatura, fueraDeRango ? 1 : 0]
+        [ultimaLectura.humedad, ultimaLectura.temperatura, fueraDeRango ? 1 : 0]
       );
-      console.log(`[HISTORIAL GUARDADO] Hum: ${humedad}% | Temp: ${temperatura}°C | Alerta: ${fueraDeRango}`);
     }
 
     res.json({ comando: estadoRiego, fueraDeRango });
@@ -95,10 +109,10 @@ app.post('/api/sensores', async (req, res) => {
   }
 });
 
-// 2. Entregar datos actuales e historial almacenado al Frontend
+// 2. Obtener todo el estado para el Dashboard
 app.get('/api/dashboard', async (req, res) => {
   try {
-    const historial = await db.all('SELECT * FROM lecturas_ambientales ORDER BY fecha_hora DESC LIMIT 30');
+    const historial = await db.all('SELECT * FROM lecturas_ambientales ORDER BY fecha_hora DESC LIMIT 40');
     const calendario = await db.get('SELECT * FROM calendario_riego ORDER BY id_calendario DESC LIMIT 1');
     const config = await db.get('SELECT * FROM configuracion_sistema WHERE id_config = 1');
 
@@ -106,7 +120,7 @@ app.get('/api/dashboard', async (req, res) => {
       actual: ultimaLectura,
       historial,
       calendario: calendario || { dias_riego: 'Lunes, Miércoles, Viernes', hora_riego: '08:30:00' },
-      config: config || { frecuencia_minutos: 60, humedad_optima: 80, temp_min: 18, temp_max: 24 },
+      config: config || { frecuencia_minutos: 1, humedad_optima: 80, temp_min: 18, temp_max: 24 },
       riego: estadoRiego
     });
   } catch (error) {
@@ -133,7 +147,7 @@ app.post('/api/calendario', async (req, res) => {
 app.post('/api/frecuencia', async (req, res) => {
   try {
     const { frecuencia_minutos } = req.body;
-    await db.run('UPDATE configuracion_sistema SET frecuencia_minutos = ? WHERE id_config = 1', [frecuencia_minutos]);
+    await db.run('UPDATE configuracion_sistema SET frecuencia_minutos = ? WHERE id_config = 1', [Number(frecuencia_minutos)]);
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -146,7 +160,33 @@ app.post('/api/riego', (req, res) => {
   res.json({ estadoRiego });
 });
 
-// 6. Riego automático programado (Hora de Chile)
+// 6. Exportar historial en CSV
+app.get('/api/exportar-csv', async (req, res) => {
+  try {
+    const rows = await db.all('SELECT * FROM lecturas_ambientales ORDER BY fecha_hora DESC');
+    let csv = 'ID,Sensor,Humedad (%),Temperatura (C),Fecha y Hora,Alerta Fuera de Rango\n';
+    rows.forEach(r => {
+      csv += `${r.id_lectura},${r.id_sensor},${r.humedad_relativa},${r.temperatura},${r.fecha_hora},${r.alerta_fuera_rango ? 'SI' : 'NO'}\n`;
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="historial_orquideas.csv"');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).send(error.message);
+  }
+});
+
+// 7. Limpiar historial de pruebas
+app.delete('/api/historial', async (req, res) => {
+  try {
+    await db.run('DELETE FROM lecturas_ambientales');
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 8. Riego automático programado (Hora de Chile)
 setInterval(async () => {
   try {
     if (!db) return;
